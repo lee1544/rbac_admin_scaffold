@@ -1,0 +1,36 @@
+### Build output ###
+target/
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+### IDE ###
+.idea/
+*.iws
+*.iml
+*.ipr
+.vscode/
+.settings/
+.project
+.classpath
+.factorypath
+.apt_generated
+.springBeans
+
+### OS ###
+.DS_Store
+Thumbs.db
+
+### Environment / secrets ###
+.env
+*.env.local
+.env.*
+!.env.example
+
+### Logs ###
+*.log
+logs/
+
+### Local tooling ###
+/.remember/remember.md
+/.codegraph/
