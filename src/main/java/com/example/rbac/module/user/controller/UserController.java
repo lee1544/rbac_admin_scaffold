@@ -41,7 +41,9 @@ public class UserController {
     @RequirePermission("user:create")
     @PostMapping
     public ApiResponse<User> createUser(@Valid @RequestBody CreateUserRequest request) {
-        return ApiResponse.success(userService.createUser(UserContext.getCurrentOrgId(), request));
+        Integer targetOrgId = userService.resolveTargetOrgId(
+                UserContext.getCurrentUserId(), UserContext.getCurrentOrgId(), request.getOrgId());
+        return ApiResponse.success(userService.createUser(targetOrgId, request));
     }
 
     @RequirePermission("user:view")

@@ -44,7 +44,8 @@ public class SecurityConfig {
                 .and()
                 .authorizeRequests()
                 .antMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                .antMatchers("/api/auth/login", "/error").permitAll()
+                .antMatchers("/", "/admin", "/admin/**", "/favicon.ico",
+                        "/api/auth/login", "/error").permitAll()
                 .anyRequest().authenticated()
                 .and()
                 .exceptionHandling()

@@ -59,6 +59,13 @@ public class PermissionController {
         return ApiResponse.success(permissionService.update(id, request));
     }
 
+    @RequirePermission("permission:update")
+    @PutMapping("/{id}/status")
+    public ApiResponse<Permission> updatePermissionStatus(@PathVariable Integer id,
+                                                          @RequestParam Integer status) {
+        return ApiResponse.success(permissionService.updateStatus(id, status));
+    }
+
     @RequirePermission("permission:delete")
     @DeleteMapping("/{id}")
     public ApiResponse<Void> deletePermission(@PathVariable Integer id) {

@@ -24,4 +24,10 @@ public class CreateRoleRequest {
     @Min(value = 0, message = "状态只能是0或1")
     @Max(value = 1, message = "状态只能是0或1")
     private Integer status;
+
+    /**
+     * Optional. Only a super administrator may create a role for another
+     * organization by passing this field.
+     */
+    private Integer orgId;
 }

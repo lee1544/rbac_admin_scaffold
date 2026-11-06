@@ -14,6 +14,8 @@ public interface RolePermissionRepository extends JpaRepository<RolePermission, 
 
     List<RolePermission> findByRoleId(Integer roleId);
 
+    List<RolePermission> findByPermissionId(Integer permissionId);
+
     /**
      * Bulk delete executed immediately. A derived delete would queue entity removals
      * until flush time, where Hibernate may insert the replacement rows first and

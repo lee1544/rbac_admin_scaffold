@@ -93,6 +93,7 @@ public class AuthService {
         userInfo.setRoles(userRoleService.getRoleCodesByUserId(user.getId()));
         userInfo.setPermissions(permissionService.getPermissionCodesByRoleIds(roleIds));
         userInfo.setFirstLogin(firstLogin);
+        userInfo.setCreateTime(user.getCreateTime());
         return userInfo;
     }
 }

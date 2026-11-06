@@ -2,6 +2,7 @@ package com.example.rbac.module.auth.dto;
 
 import lombok.Data;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Data
@@ -15,4 +16,5 @@ public class UserInfo {
     private List<String> roles;
     private List<String> permissions;
     private boolean firstLogin;
+    private LocalDateTime createTime;
 }

@@ -22,6 +22,12 @@ public class CreateUserRequest {
     private String realName;
 
     /**
+     * Optional. Only a super administrator may create a user in another
+     * organization by passing this field.
+     */
+    private Integer orgId;
+
+    /**
      * Optional. When omitted, the organization's default ORG_USER role is assigned.
      */
     private List<Integer> roleIds;

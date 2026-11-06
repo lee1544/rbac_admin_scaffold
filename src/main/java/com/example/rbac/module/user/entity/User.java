@@ -13,6 +13,7 @@ import javax.persistence.Id;
 import javax.persistence.Table;
 import javax.persistence.Transient;
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Getter
 @Setter
@@ -45,4 +46,10 @@ public class User extends BaseEntity {
 
     @Transient
     private String orgName;
+
+    @Transient
+    private List<Integer> roleIds;
+
+    @Transient
+    private List<String> roleNames;
 }

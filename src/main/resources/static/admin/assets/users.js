@@ -1,0 +1,540 @@
+(function () {
+  'use strict';
+
+  var RBAC = window.RBAC;
+  var AdminPage = window.AdminPage;
+
+  var state = {
+    page: 0,
+    size: 10,
+    realname: '',
+    status: '',
+    orgId: '',
+    orgs: [],
+    items: [],
+    pageData: null,
+    roles: [],
+    editing: null,
+    roleUser: null
+  };
+
+  var currentUserId = null;
+
+  function el(id) {
+    return document.getElementById(id);
+  }
+
+  document.addEventListener('DOMContentLoaded', function () {
+    AdminPage.init({ permission: 'user:view' }).then(function (user) {
+      if (!user || !AdminPage.can('user:view')) {
+        return;
+      }
+      currentUserId = user.id;
+      init();
+    });
+  });
+
+  function init() {
+    AdminPage.bindModalClose();
+    bindEvents();
+    if (AdminPage.isSuperAdmin()) {
+      loadOrgOptions();
+    } else {
+      var orgField = el('orgFilterField');
+      if (orgField) {
+        orgField.hidden = true;
+      }
+      var form = el('filterForm');
+      if (form) {
+        form.classList.remove('filters-four');
+        form.classList.add('filters-three');
+      }
+    }
+    loadList();
+  }
+
+  function bindEvents() {
+    el('filterForm').addEventListener('submit', function (event) {
+      event.preventDefault();
+      state.realname = el('filterRealname').value.trim();
+      state.status = el('statusFilter').value;
+      state.page = 0;
+      loadList();
+    });
+    el('resetFilterBtn').addEventListener('click', function () {
+      el('filterRealname').value = '';
+      el('statusFilter').value = '';
+      if (el('orgFilter')) {
+        el('orgFilter').value = '';
+      }
+      state.realname = '';
+      state.status = '';
+      state.orgId = '';
+      state.page = 0;
+      loadList();
+    });
+    var orgFilter = el('orgFilter');
+    if (orgFilter) {
+      orgFilter.addEventListener('change', function () {
+        state.orgId = orgFilter.value;
+        state.page = 0;
+        loadList();
+      });
+    }
+    el('refreshBtn').addEventListener('click', loadList);
+    el('createBtn').addEventListener('click', openCreate);
+    el('userForm').addEventListener('submit', submitUser);
+    el('saveUserRolesBtn').addEventListener('click', saveUserRoles);
+    el('pageSize').addEventListener('change', function () {
+      state.size = Number(el('pageSize').value) || 10;
+      state.page = 0;
+      loadList();
+    });
+    el('firstPageBtn').addEventListener('click', function () {
+      goPage(0);
+    });
+    el('prevPageBtn').addEventListener('click', function () {
+      goPage(state.page - 1);
+    });
+    el('nextPageBtn').addEventListener('click', function () {
+      goPage(state.page + 1);
+    });
+    el('lastPageBtn').addEventListener('click', function () {
+      goPage(state.pageData ? state.pageData.totalPages - 1 : 0);
+    });
+    el('userTableBody').addEventListener('click', function (event) {
+      var button = event.target.closest('[data-action]');
+      if (!button || button.disabled) {
+        return;
+      }
+      var id = Number(button.dataset.id);
+      var user = state.items.filter(function (item) {
+        return item.id === id;
+      })[0];
+      if (!user) {
+        return;
+      }
+      if (button.dataset.action === 'edit') {
+        openEdit(user);
+      } else if (button.dataset.action === 'toggle') {
+        toggleStatus(user);
+      } else if (button.dataset.action === 'roles') {
+        openRoles(user);
+      } else if (button.dataset.action === 'reset-password') {
+        resetPassword(user);
+      } else if (button.dataset.action === 'delete') {
+        removeUser(user);
+      }
+    });
+  }
+
+  /** 超级管理员可按组织筛选：加载全部组织填充下拉框。 */
+  async function loadOrgOptions() {
+    try {
+      var result = await RBAC.api('/api/organizations?page=0&size=100');
+      state.orgs = result && Array.isArray(result.items) ? result.items : [];
+      var select = el('orgFilter');
+      if (!select) {
+        return;
+      }
+      select.innerHTML = '<option value="">当前组织</option>' + state.orgs.map(function (org) {
+        return '<option value="' + org.id + '">'
+          + RBAC.escapeHtml(org.orgName) + '（' + RBAC.escapeHtml(org.orgCode) + '）</option>';
+      }).join('');
+    } catch (e) {
+      RBAC.toast('组织列表加载失败：' + (e.message || '未知错误'), 'error');
+    }
+  }
+
+  async function loadRoles(orgId) {
+    try {
+      var url = '/api/roles' + (orgId ? ('?orgId=' + encodeURIComponent(orgId)) : '');
+      var roles = await RBAC.api(url);
+      state.roles = Array.isArray(roles) ? roles : [];
+    } catch (e) {
+      state.roles = [];
+    }
+  }
+
+  async function loadList() {
+    el('listSummary').textContent = '加载中...';
+    var query = new URLSearchParams();
+    query.set('page', String(state.page));
+    query.set('size', String(state.size));
+    if (state.realname) {
+      query.set('realname', state.realname);
+    }
+    if (state.status !== '') {
+      query.set('status', state.status);
+    }
+    if (state.orgId) {
+      query.set('orgId', state.orgId);
+    }
+
+    try {
+      var result = await RBAC.api('/api/users?' + query.toString());
+      state.pageData = result || { items: [], totalElements: 0, totalPages: 0 };
+      state.items = Array.isArray(result.items) ? result.items : [];
+      if (state.items.length === 0 && state.page > 0 && state.pageData.totalElements > 0) {
+        state.page -= 1;
+        return loadList();
+      }
+      renderTable();
+      renderPager();
+    } catch (e) {
+      state.items = [];
+      state.pageData = null;
+      renderError(e.message);
+      renderPager();
+    }
+  }
+
+  function renderTable() {
+    var body = el('userTableBody');
+    if (state.items.length === 0) {
+      body.innerHTML = '<tr><td colspan="7"><div class="table-state table-empty"><strong>暂无用户</strong><span>可以点击右上角“新建用户”添加账号。</span></div></td></tr>';
+      el('listSummary').textContent = '共 0 个用户';
+      return;
+    }
+
+    var canUpdate = AdminPage.can('user:update');
+    var canAssign = AdminPage.can('user:assign-role');
+    var canReset = AdminPage.can('user:reset-password');
+    var canDelete = AdminPage.can('user:delete');
+
+    body.innerHTML = state.items.map(function (user) {
+      var isSelf = Number(user.id) === Number(currentUserId);
+      var actions = '';
+      if (canUpdate) {
+        actions += '<button class="mini-btn" type="button" data-action="edit" data-id="' + user.id + '">编辑</button>';
+        actions += '<button class="mini-btn" type="button" data-action="toggle" data-id="' + user.id + '"'
+          + (isSelf ? ' disabled title="不能禁用当前登录账号"' : '') + '>'
+          + (Number(user.status) === 1 ? '禁用' : '启用') + '</button>';
+      }
+      if (canAssign) {
+        actions += '<button class="mini-btn" type="button" data-action="roles" data-id="' + user.id + '"'
+          + (isSelf ? ' disabled title="不能修改当前登录账号的角色"' : '') + '>角色</button>';
+      }
+      if (canReset) {
+        actions += '<button class="mini-btn" type="button" data-action="reset-password" data-id="' + user.id + '"'
+          + (isSelf ? ' disabled title="不能重置当前登录账号的密码"' : '') + '>重置密码</button>';
+      }
+      if (canDelete) {
+        actions += '<button class="mini-btn is-danger" type="button" data-action="delete" data-id="' + user.id + '"'
+          + (isSelf ? ' disabled title="不能删除当前登录账号"' : '') + '>删除</button>';
+      }
+      if (!actions) {
+        actions = '<span class="muted-value">只读</span>';
+      }
+
+      return '<tr>'
+        + '<td><span class="code-pill">' + RBAC.escapeHtml(user.username) + '</span>'
+        + (isSelf ? ' <span class="self-tag">当前</span>' : '')
+        + (AdminPage.isSuperAdmin()
+          ? ' <span class="muted-value">' + RBAC.escapeHtml(user.orgName || '未分配组织') + '</span>'
+          : '')
+        + '</td>'
+        + '<td><strong>' + RBAC.escapeHtml(user.realName || '\u2014') + '</strong></td>'
+        + '<td>' + renderRoleBadges(user) + '</td>'
+        + '<td>' + statusBadge(user.status) + '</td>'
+        + '<td class="muted-value">' + RBAC.formatDateTime(user.lastLoginTime) + '</td>'
+        + '<td class="muted-value">' + RBAC.formatDateTime(user.createTime) + '</td>'
+        + '<td class="td-actions"><div class="row-actions">' + actions + '</div></td>'
+        + '</tr>';
+    }).join('');
+
+    var orgLabel = '';
+    if (state.orgId) {
+      var selectedOrg = state.orgs.filter(function (org) {
+        return String(org.id) === String(state.orgId);
+      })[0];
+      orgLabel = '，组织：' + (selectedOrg ? selectedOrg.orgName : ('#' + state.orgId));
+    }
+    el('listSummary').textContent = '共 ' + state.pageData.totalElements + ' 个用户'
+      + (state.realname ? '，姓名：' + state.realname : '')
+      + orgLabel;
+  }
+
+  function renderRoleBadges(user) {
+    var names = Array.isArray(user.roleNames) ? user.roleNames : [];
+    if (names.length === 0) {
+      return '<span class="muted-value">未分配</span>';
+    }
+    var visible = names.slice(0, 2).map(function (name) {
+      return '<span class="role-badge">' + RBAC.escapeHtml(name) + '</span>';
+    }).join('');
+    if (names.length > 2) {
+      visible += '<span class="role-badge role-badge-more">+' + (names.length - 2) + '</span>';
+    }
+    return '<span class="badge-list">' + visible + '</span>';
+  }
+
+  function statusBadge(status) {
+    var enabled = Number(status) === 1;
+    return '<span class="status-badge ' + (enabled ? 'status-activated' : 'status-disabled') + '">'
+      + (enabled ? '启用' : '禁用') + '</span>';
+  }
+
+  function renderError(message) {
+    el('userTableBody').innerHTML = '<tr><td colspan="7"><div class="table-state table-empty"><strong>加载失败</strong><span>'
+      + RBAC.escapeHtml(message) + '</span><button class="btn btn-ghost btn-sm" type="button" onclick="location.reload()">重新加载</button></div></td></tr>';
+    el('listSummary').textContent = '加载失败';
+  }
+
+  function renderPager() {
+    var data = state.pageData || { totalElements: 0, totalPages: 0 };
+    var totalPages = data.totalPages || 0;
+    el('pageInfo').textContent = '共 ' + data.totalElements + ' 个用户';
+    el('pageNumber').textContent = totalPages === 0 ? '0 / 0' : (state.page + 1) + ' / ' + totalPages;
+    el('firstPageBtn').disabled = state.page <= 0;
+    el('prevPageBtn').disabled = state.page <= 0;
+    el('nextPageBtn').disabled = totalPages === 0 || state.page >= totalPages - 1;
+    el('lastPageBtn').disabled = totalPages === 0 || state.page >= totalPages - 1;
+  }
+
+  function goPage(page) {
+    var totalPages = state.pageData ? state.pageData.totalPages : 0;
+    if (page < 0 || (totalPages > 0 && page >= totalPages) || (!state.pageData && page > 0)) {
+      return;
+    }
+    state.page = page;
+    loadList();
+  }
+
+  function openCreate() {
+    state.editing = null;
+    el('userForm').reset();
+    el('userId').value = '';
+    el('usernameField').hidden = false;
+    el('passwordField').hidden = false;
+    el('realNameField').classList.remove('field-full');
+    el('userModalTitle').textContent = '新建用户';
+    var hint = '新用户默认加入所在组织的普通用户角色，可在用户列表中重新分配角色。';
+    if (AdminPage.isSuperAdmin() && state.orgId) {
+      var selectedOrg = state.orgs.filter(function (org) {
+        return String(org.id) === String(state.orgId);
+      })[0];
+      hint = '新用户将创建到“' + (selectedOrg ? selectedOrg.orgName : ('#' + state.orgId)) + '”。' + hint;
+    }
+    el('userModalHint').textContent = hint;
+    el('userSubmitBtn').textContent = '创建用户';
+    AdminPage.openModal('userModal');
+  }
+
+  function openEdit(user) {
+    state.editing = user;
+    el('userForm').reset();
+    el('userId').value = String(user.id);
+    el('username').value = user.username || '';
+    el('realName').value = user.realName || '';
+    el('usernameField').hidden = true;
+    el('passwordField').hidden = true;
+    el('realNameField').classList.add('field-full');
+    el('userModalTitle').textContent = '编辑用户';
+    el('userModalHint').textContent = '用户名和密码不能在这里修改，请使用“重置密码”操作。';
+    el('userSubmitBtn').textContent = '保存修改';
+    AdminPage.openModal('userModal');
+  }
+
+  async function submitUser(event) {
+    event.preventDefault();
+    var id = el('userId').value;
+    var realName = el('realName').value.trim();
+    if (!realName) {
+      RBAC.toast('请输入姓名', 'error');
+      el('realName').focus();
+      return;
+    }
+
+    var body;
+    if (id) {
+      body = { realName: realName };
+    } else {
+      var username = el('username').value.trim();
+      var password = el('password').value;
+      if (username.length < 3) {
+        RBAC.toast('用户名至少 3 个字符', 'error');
+        el('username').focus();
+        return;
+      }
+      if (password.length < 6) {
+        RBAC.toast('密码至少 6 个字符', 'error');
+        el('password').focus();
+        return;
+      }
+      body = { username: username, password: password, realName: realName };
+      // 超级管理员按组织筛选时，把新用户建到所选组织
+      if (AdminPage.isSuperAdmin() && state.orgId) {
+        body.orgId = Number(state.orgId);
+      }
+    }
+
+    var button = el('userSubmitBtn');
+    RBAC.setButtonLoading(button, true, id ? '保存中...' : '创建中...');
+    try {
+      if (id) {
+        await RBAC.api('/api/users/' + id, { method: 'PUT', body: body });
+        RBAC.toast('用户信息已更新', 'success');
+      } else {
+        await RBAC.api('/api/users', { method: 'POST', body: body });
+        RBAC.toast('用户已创建', 'success');
+      }
+      AdminPage.closeModal('userModal');
+      loadList();
+    } catch (e) {
+      RBAC.toast(e.message || '保存失败', 'error');
+    } finally {
+      RBAC.setButtonLoading(button, false);
+    }
+  }
+
+  /** 组织角色只能分配给同组织账号。 */
+  function isRoleAssignableTo(role, user) {
+    if (role.orgId === null || typeof role.orgId === 'undefined') {
+      return false;
+    }
+    return String(role.orgId) === String(user.orgId);
+  }
+
+  async function openRoles(user) {
+    state.roleUser = user;
+    el('userRolesTitle').textContent = '分配角色';
+    el('userRolesHint').textContent = '为“' + (user.realName || user.username) + '”分配角色，保存后会替换当前所有角色。';
+    el('userRoleOptions').innerHTML = '<div class="loading-line"><span class="spinner"></span>加载角色...</div>';
+    AdminPage.openModal('userRolesModal');
+
+    await loadRoles(AdminPage.isSuperAdmin() ? user.orgId : null);
+
+    var current = Array.isArray(user.roleIds) ? user.roleIds : [];
+    if (current.length === 0) {
+      try {
+        var userRoles = await RBAC.api('/api/users/' + user.id + '/roles');
+        current = (Array.isArray(userRoles) ? userRoles : []).map(function (role) {
+          return role.id;
+        });
+      } catch (e) {
+        current = [];
+      }
+    }
+    var selected = {};
+    current.forEach(function (id) {
+      selected[id] = true;
+    });
+
+    var assignable = state.roles.filter(function (role) {
+      return isRoleAssignableTo(role, user);
+    });
+
+    if (assignable.length === 0) {
+      el('userRoleOptions').innerHTML = '<div class="empty-inline">该账号所在组织没有可分配的角色。</div>';
+      return;
+    }
+
+    el('userRoleOptions').innerHTML = assignable.map(function (role) {
+      return '<label class="check-item">'
+        + '<input type="checkbox" value="' + role.id + '"' + (selected[role.id] ? ' checked' : '') + '>'
+        + '<span class="check-item-body">'
+        + '<span class="check-item-title">' + RBAC.escapeHtml(role.roleName)
+        + ' <span class="code-pill code-pill-sm">' + RBAC.escapeHtml(role.roleCode) + '</span></span>'
+        + '<span class="check-item-desc">' + RBAC.escapeHtml(role.description || '无描述') + '</span>'
+        + '</span>'
+        + '</label>';
+    }).join('');
+  }
+
+  async function saveUserRoles() {
+    if (!state.roleUser) {
+      return;
+    }
+    var checked = Array.prototype.map.call(
+      el('userRoleOptions').querySelectorAll('input[type="checkbox"]:checked'),
+      function (input) {
+        return Number(input.value);
+      }
+    );
+    var button = el('saveUserRolesBtn');
+    RBAC.setButtonLoading(button, true, '保存中...');
+    try {
+      await RBAC.api('/api/users/' + state.roleUser.id + '/roles', {
+        method: 'POST',
+        body: { roleIds: checked }
+      });
+      state.roleUser.roleIds = checked;
+      state.roleUser.roleNames = checked.map(function (roleId) {
+        var role = state.roles.filter(function (item) {
+          return Number(item.id) === Number(roleId);
+        })[0];
+        return role ? role.roleName : null;
+      }).filter(Boolean);
+      RBAC.toast('角色已更新', 'success');
+      AdminPage.closeModal('userRolesModal');
+      renderTable();
+    } catch (e) {
+      RBAC.toast(e.message || '保存角色失败', 'error');
+    } finally {
+      RBAC.setButtonLoading(button, false);
+    }
+  }
+
+  async function toggleStatus(user) {
+    var next = Number(user.status) === 1 ? 0 : 1;
+    var confirmed = await AdminPage.confirm({
+      title: next === 0 ? '禁用用户' : '启用用户',
+      message: next === 0
+        ? '禁用后“' + (user.realName || user.username) + '”将无法登录，确定继续吗？'
+        : '启用后该用户可以重新登录，确定继续吗？',
+      confirmText: next === 0 ? '禁用' : '启用',
+      danger: next === 0
+    });
+    if (!confirmed) {
+      return;
+    }
+    try {
+      await RBAC.api('/api/users/' + user.id + '/status?status=' + next, { method: 'PUT' });
+      RBAC.toast(next === 1 ? '用户已启用' : '用户已禁用', 'success');
+      loadList();
+    } catch (e) {
+      RBAC.toast(e.message || '操作失败', 'error');
+    }
+  }
+
+  async function resetPassword(user) {
+    var confirmed = await AdminPage.confirm({
+      title: '重置密码',
+      message: '确定把“' + (user.realName || user.username) + '”的密码重置为初始密码 12345678 吗？',
+      confirmText: '重置密码'
+    });
+    if (!confirmed) {
+      return;
+    }
+    try {
+      await RBAC.api('/api/users/' + user.id + '/reset-password', { method: 'PUT' });
+      RBAC.toast('密码已重置为 12345678', 'success');
+      loadList();
+    } catch (e) {
+      RBAC.toast(e.message || '重置密码失败', 'error');
+    }
+  }
+
+  async function removeUser(user) {
+    var confirmed = await AdminPage.confirm({
+      title: '删除用户',
+      message: '确定删除“' + (user.realName || user.username) + '”吗？该操作无法恢复。',
+      confirmText: '删除用户',
+      danger: true
+    });
+    if (!confirmed) {
+      return;
+    }
+    try {
+      await RBAC.api('/api/users/' + user.id, { method: 'DELETE' });
+      RBAC.toast('用户已删除', 'success');
+      if (state.items.length === 1 && state.page > 0) {
+        state.page -= 1;
+      }
+      loadList();
+    } catch (e) {
+      RBAC.toast(e.message || '删除失败', 'error');
+    }
+  }
+})();

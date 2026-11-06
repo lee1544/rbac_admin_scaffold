@@ -1,5 +1,6 @@
 package com.example.rbac.module.permission.service;
 
+import com.example.rbac.common.constant.SystemConstants;
 import com.example.rbac.common.event.RolePermissionsChangedEvent;
 import com.example.rbac.common.exception.BusinessException;
 import com.example.rbac.common.exception.NotFoundException;
@@ -17,6 +18,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 @Service
@@ -59,11 +61,15 @@ public class PermissionService {
     @Transactional
     public Permission update(Integer id, UpdatePermissionRequest request) {
         Permission permission = getById(id);
+        boolean authChanged = false;
         if (request.getPermissionCode() != null) {
             String code = request.getPermissionCode().trim();
             if (!code.equals(permission.getPermissionCode())
                     && permissionRepository.existsByPermissionCode(code)) {
                 throw new BusinessException("权限编码已存在");
+            }
+            if (!code.equals(permission.getPermissionCode())) {
+                authChanged = true;
             }
             permission.setPermissionCode(code);
         }
@@ -71,9 +77,29 @@ public class PermissionService {
             permission.setPermissionName(request.getPermissionName().trim());
         }
         if (request.getStatus() != null) {
+            if (!Objects.equals(permission.getStatus(), request.getStatus())) {
+                authChanged = true;
+            }
             permission.setStatus(request.getStatus());
         }
-        return permissionRepository.save(permission);
+        Permission saved = permissionRepository.save(permission);
+        if (authChanged) {
+            evictPermissionCaches(id);
+        }
+        return saved;
+    }
+
+    @Transactional
+    public Permission updateStatus(Integer id, Integer status) {
+        if (status == null
+                || (status != SystemConstants.STATUS_ENABLED && status != SystemConstants.STATUS_DISABLED)) {
+            throw new BusinessException("状态只能是0或1");
+        }
+        Permission permission = getById(id);
+        permission.setStatus(status);
+        Permission saved = permissionRepository.save(permission);
+        evictPermissionCaches(id);
+        return saved;
     }
 
     @Transactional
@@ -151,5 +177,16 @@ public class PermissionService {
         // Publish before deleting the relation so listeners can still resolve role members.
         eventPublisher.publishEvent(new RolePermissionsChangedEvent(roleId));
         rolePermissionRepository.deleteByRoleId(roleId);
+    }
+
+    /**
+     * A permission change affects every role that references it. Evict the cached
+     * permission snapshot of each affected user.
+     */
+    private void evictPermissionCaches(Integer permissionId) {
+        rolePermissionRepository.findByPermissionId(permissionId).stream()
+                .map(RolePermission::getRoleId)
+                .distinct()
+                .forEach(roleId -> eventPublisher.publishEvent(new RolePermissionsChangedEvent(roleId)));
     }
 }

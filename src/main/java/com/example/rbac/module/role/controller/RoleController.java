@@ -52,8 +52,9 @@ public class RoleController {
     @RequirePermission("role:create")
     @PostMapping
     public ApiResponse<Role> createRole(@Valid @RequestBody CreateRoleRequest request) {
-        return ApiResponse.success(
-                roleService.createRole(UserContext.getCurrentOrgId(), request));
+        Integer targetOrgId = roleService.resolveTargetOrgId(
+                UserContext.getCurrentUserId(), UserContext.getCurrentOrgId(), request.getOrgId());
+        return ApiResponse.success(roleService.createRole(targetOrgId, request));
     }
 
     @RequirePermission("role:update")

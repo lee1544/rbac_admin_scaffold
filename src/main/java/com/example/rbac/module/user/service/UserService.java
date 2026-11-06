@@ -105,15 +105,14 @@ public class UserService {
 
     public Page<User> getUsers(Integer orgId, String realName, Integer status, Pageable pageable) {
         Page<User> page = userRepository.search(orgId, realName, status, pageable);
-        String orgName = getOrgName(orgId);
-        page.forEach(user -> user.setOrgName(orgName));
+        page.forEach(this::fillTransientFields);
         return page;
     }
 
     public User getUserById(Integer userId, Integer currentUserId, Integer currentOrgId) {
         User user = findUser(userId);
         checkOrgAccess(user, currentUserId, currentOrgId);
-        user.setOrgName(getOrgName(user.getOrgId()));
+        fillTransientFields(user);
         return user;
     }
 
@@ -273,6 +272,22 @@ public class UserService {
         return organizationRepository.findById(orgId)
                 .map(organization -> organization.getOrgName())
                 .orElse("未知组织");
+    }
+
+    /**
+     * Populates display-only fields used by the admin console tables.
+     */
+    private void fillTransientFields(User user) {
+        user.setOrgName(getOrgName(user.getOrgId()));
+        List<Integer> roleIds = userRoleRepository.findRoleIdsByUserId(user.getId());
+        user.setRoleIds(roleIds);
+        if (roleIds.isEmpty()) {
+            user.setRoleNames(Collections.emptyList());
+            return;
+        }
+        user.setRoleNames(roleRepository.findAllById(roleIds).stream()
+                .map(Role::getRoleName)
+                .collect(Collectors.toList()));
     }
 
     private void validateStatus(Integer status) {

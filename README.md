@@ -42,7 +42,8 @@ rbac_admin_scaffold
     │   │   │   └── security           # 登录上下文、权限注解、缓存、401/403 处理
     │   │   ├── bootstrap              # 启动装配与种子数据
     │   │   │   ├── DataInitializer.java
-    │   │   │   └── config             # SecurityConfig / WebConfig(CORS)
+    │   │   │   ├── config             # SecurityConfig / WebConfig(CORS)
+    │   │   │   └── web                # AdminPageController（/admin 入口）
     │   │   └── module                 # 业务模块（按功能分包）
     │   │       ├── auth               # 登录、登出、当前用户信息、JWT
     │   │       ├── user               # 用户管理、角色分配、密码管理
@@ -53,8 +54,16 @@ rbac_admin_scaffold
     │       ├── application.properties
     │       ├── application-dev.properties
     │       ├── application-prod.properties
-    │       └── db/migration
-    │           └── V1__init.sql       # Flyway 建表脚本
+    │       ├── db/migration
+    │       │   └── V1__init.sql       # Flyway 建表脚本
+    │       └── static/admin           # 内置静态管理后台
+    │           ├── login.html
+    │           ├── index.html
+    │           ├── organizations.html
+    │           ├── users.html
+    │           ├── roles.html
+    │           ├── permissions.html
+    │           └── assets             # admin.css / common.js / page.js / 页面脚本
     └── test
         ├── java/com/example/rbac
         │   ├── AuthIntegrationTest.java
@@ -157,7 +166,8 @@ curl -X POST http://localhost:8080/api/auth/login \
       "orgName": "默认组织",
       "roles": ["SUPER_ADMIN"],
       "permissions": ["user:view", "user:create", "..."],
-      "firstLogin": false
+      "firstLogin": false,
+      "createTime": "2026-11-06T16:30:30"
     }
   },
   "timestamp": 1730000000000
@@ -171,7 +181,40 @@ curl http://localhost:8080/api/auth/userinfo \
   -H "Authorization: Bearer <token>"
 ```
 
-### 3.5 打包运行
+### 3.5 内置管理后台
+
+项目自带一套静态管理后台，无需单独启动前端工程。启动服务后访问：
+
+```text
+http://localhost:8080/admin
+```
+
+或直接打开 `http://localhost:8080/admin/login.html`，使用默认账号 `admin / admin123` 登录。
+
+管理后台包含以下页面：
+
+| 页面 | 地址 | 说明 |
+| --- | --- | --- |
+| 登录 | `/admin/login.html` | JWT 登录，记住用户名 |
+| 概览 | `/admin/index.html` | 当前账号信息与用户/组织/角色/权限数量 |
+| 组织管理 | `/admin/organizations.html` | 组织 CRUD、启停、创建组织时初始化管理员 |
+| 用户管理 | `/admin/users.html` | 用户 CRUD、启停、角色分配、重置密码 |
+| 角色管理 | `/admin/roles.html` | 角色 CRUD、按模块分组分配权限 |
+| 权限管理 | `/admin/permissions.html` | 权限 CRUD、启停 |
+
+实现说明：
+
+- 页面位于 `src/main/resources/static/admin`，由 Spring Boot 直接作为静态资源提供；
+- 页面通过 REST API 与 JWT 交互，所有 `/api/**` 仍然需要登录与对应权限；
+- `/admin/**` 静态页面本身放行，未登录访问业务页面会被前端跳转到登录页；
+- 菜单与操作按钮根据当前账号权限动态显示（`data-any-permission`）；
+- 超级管理员可在用户/角色页按组织筛选，并可在选中组织下创建用户/角色；
+- 前端 JS 命名空间为 `window.RBAC`，localStorage key 使用 `rbac.admin.*`，便于与宿主项目区分；
+- `assets/common.js` 会自动解包后端统一的 `ApiResponse`，页面代码直接使用 `data`。
+
+> 该控制台是可裁剪的示例 UI。如果宿主项目已有前端，可保留后端接口，删除 `static/admin` 后按自己的技术栈实现页面。
+
+### 3.6 打包运行
 
 ```bash
 mvn clean package
@@ -288,7 +331,7 @@ spring.flyway.validate-on-migrate=true
    - 用户所属组织状态为启用。
 3. 权限编码从 `UserPermissionCache`（Guava 本地缓存）读取；缓存未命中时查库并回填。
 4. Controller 方法上的 `@RequirePermission("xxx")` 由 `PermissionAspect` 拦截校验。
-5. 角色授权变更、用户角色变更、删除用户等操作会发布事件，清理相关用户权限缓存。
+5. 角色授权变更、用户角色变更、删除用户、权限编码或状态变更等操作会发布事件，清理相关用户权限缓存。
 
 ### 5.5 组织数据隔离
 
@@ -359,11 +402,14 @@ spring.flyway.validate-on-migrate=true
   "username": "zhangsan",
   "password": "123456",
   "realName": "张三",
+  "orgId": 1,
   "roleIds": [2]
 }
 ```
 
-`roleIds` 可省略，省略时自动分配该组织的 `ORG_USER_{orgId}` 角色。
+- `orgId` 可省略，省略时创建到当前登录账号所属组织；仅超级管理员可指定其他组织。
+- `roleIds` 可省略，省略时自动分配该组织的 `ORG_USER_{orgId}` 角色。
+- 用户列表额外返回 `orgName`、`roleIds`、`roleNames`，方便管理后台直接展示角色徽标。
 
 ### 6.3 组织
 
@@ -400,6 +446,19 @@ spring.flyway.validate-on-migrate=true
 | POST | `/api/roles/{id}/permissions` | `role:assign-permission` | 全量覆盖角色权限 |
 | GET | `/api/roles/{id}/permissions` | `role:view` | 查看角色权限 |
 
+创建角色请求示例：
+
+```json
+{
+  "roleCode": "REPORT_VIEWER",
+  "roleName": "报表查看者",
+  "description": "只读报表权限",
+  "orgId": 1
+}
+```
+
+- `orgId` 可省略，省略时创建到当前登录账号所属组织；仅超级管理员可指定其他组织。
+
 角色授权请求示例：
 
 ```json
@@ -415,7 +474,8 @@ spring.flyway.validate-on-migrate=true
 | GET | `/api/permissions?code=&name=&status=` | `permission:view` | 查询权限 |
 | GET | `/api/permissions/{id}` | `permission:view` | 权限详情 |
 | POST | `/api/permissions` | `permission:create` | 创建权限 |
-| PUT | `/api/permissions/{id}` | `permission:update` | 更新权限 |
+| PUT | `/api/permissions/{id}` | `permission:update` | 更新权限（编码或状态变化会清理相关用户权限缓存） |
+| PUT | `/api/permissions/{id}/status?status=1` | `permission:update` | 启用/禁用权限并清理相关用户权限缓存 |
 | DELETE | `/api/permissions/{id}` | `permission:delete` | 删除权限（已分配时拒绝） |
 
 ---
