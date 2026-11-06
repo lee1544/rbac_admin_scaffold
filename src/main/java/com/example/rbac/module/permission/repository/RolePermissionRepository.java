@@ -2,6 +2,9 @@ package com.example.rbac.module.permission.repository;
 
 import com.example.rbac.module.permission.entity.RolePermission;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -11,9 +14,18 @@ public interface RolePermissionRepository extends JpaRepository<RolePermission, 
 
     List<RolePermission> findByRoleId(Integer roleId);
 
-    void deleteByRoleId(Integer roleId);
+    /**
+     * Bulk delete executed immediately. A derived delete would queue entity removals
+     * until flush time, where Hibernate may insert the replacement rows first and
+     * violate the unique constraint on (role_id, permission_id).
+     */
+    @Modifying(flushAutomatically = true)
+    @Query("delete from RolePermission rp where rp.roleId = :roleId")
+    void deleteByRoleId(@Param("roleId") Integer roleId);
 
-    void deleteByPermissionId(Integer permissionId);
+    @Modifying(flushAutomatically = true)
+    @Query("delete from RolePermission rp where rp.permissionId = :permissionId")
+    void deleteByPermissionId(@Param("permissionId") Integer permissionId);
 
     boolean existsByRoleId(Integer roleId);
 

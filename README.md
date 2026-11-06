@@ -13,7 +13,8 @@
 | 语言 | Java 8 |
 | 框架 | Spring Boot 2.6.13 |
 | 持久化 | Spring Data JPA + Hibernate |
-| 数据库 | H2（本地默认，内存库）/ MySQL 8（dev、prod） |
+| 数据库 | MySQL 8 |
+| 数据库迁移 | Flyway 8.5.13（启动时自动建表/升级） |
 | 安全 | Spring Security + JWT（jjwt 0.9.1） |
 | 密码 | BCrypt |
 | 权限缓存 | Guava Cache（本地内存） |
@@ -28,8 +29,6 @@
 rbac_admin_scaffold
 ├── pom.xml
 ├── README.md
-├── docs
-│   └── schema-mysql.sql              # MySQL 参考建表脚本
 └── src
     ├── main
     │   ├── java/com/example/rbac
@@ -52,15 +51,18 @@ rbac_admin_scaffold
     │   │       └── permission         # 权限管理、权限校验切面
     │   └── resources
     │       ├── application.properties
-    │       ├── application-local.properties
     │       ├── application-dev.properties
-    │       └── application-prod.properties
+    │       ├── application-prod.properties
+    │       └── db/migration
+    │           └── V1__init.sql       # Flyway 建表脚本
     └── test
-        └── java/com/example/rbac
-            ├── AuthIntegrationTest.java
-            ├── RbacAdminApplicationTests.java
-            ├── common/api/PageResponseTest.java
-            └── module/auth/security/JwtTokenProviderTest.java
+        ├── java/com/example/rbac
+        │   ├── AuthIntegrationTest.java
+        │   ├── RbacAdminApplicationTests.java
+        │   ├── common/api/PageResponseTest.java
+        │   └── module/auth/security/JwtTokenProviderTest.java
+        └── resources
+            └── application.properties  # 测试专用 H2，不连接 MySQL
 ```
 
 ### 模块内部约定
@@ -85,14 +87,39 @@ module/<feature>
 
 - JDK 8+
 - Maven 3.6+（建议；只要能构建 Spring Boot 2.6 即可）
+- MySQL 8.x
 
-### 3.2 零配置启动（H2 内存库）
+### 3.2 创建数据库
+
+Flyway 只负责建表，不负责创建数据库，请先手动创建：
+
+```sql
+CREATE DATABASE rbac_admin_scaffold DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
+```
+
+### 3.3 启动（默认 dev，MySQL）
 
 ```bash
 mvn spring-boot:run
 ```
 
-默认激活 `local` profile，使用 H2 内存数据库，启动时自动建表并写入种子数据，无需安装任何数据库。
+默认激活 `dev` profile，直接连接本机 MySQL，启动时 Flyway 自动执行 `src/main/resources/db/migration/V1__init.sql` 建表，随后 `DataInitializer` 幂等写入种子数据。
+
+默认连接参数：
+
+| 配置 | 默认值 |
+| --- | --- |
+| DB_URL | `jdbc:mysql://localhost:3306/rbac_admin_scaffold?...` |
+| DB_USERNAME | `root` |
+| DB_PASSWORD | `123456` |
+
+可通过环境变量覆盖：
+
+```bash
+DB_USERNAME=your_user DB_PASSWORD=your_password mvn spring-boot:run
+```
+
+对应配置见 `src/main/resources/application-dev.properties`，也可直接修改其中的默认值。
 
 启动成功后：
 
@@ -101,8 +128,10 @@ mvn spring-boot:run
 - 默认密码：`admin123`
 
 > 默认账号只在第一次启动、数据库中不存在 `admin` 时创建；后续启动不会覆盖已修改的密码。
+>
+> Flyway 执行记录保存在 `flyway_schema_history` 表中。新增表结构变更时，请新增 `V2__xxx.sql`、`V3__xxx.sql` 等迁移脚本，不要修改已执行过的脚本。
 
-### 3.3 登录示例
+### 3.4 登录示例
 
 ```bash
 curl -X POST http://localhost:8080/api/auth/login \
@@ -142,36 +171,6 @@ curl http://localhost:8080/api/auth/userinfo \
   -H "Authorization: Bearer <token>"
 ```
 
-### 3.4 使用 MySQL（dev profile）
-
-先创建数据库：
-
-```sql
-CREATE DATABASE rbac_admin DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
-```
-
-启动：
-
-```bash
-mvn spring-boot:run -Dspring-boot.run.profiles=dev
-```
-
-默认连接参数：
-
-| 配置 | 默认值 |
-| --- | --- |
-| DB_URL | `jdbc:mysql://localhost:3306/rbac_admin?...` |
-| DB_USERNAME | `root` |
-| DB_PASSWORD | `root` |
-
-可通过环境变量覆盖：
-
-```bash
-DB_USERNAME=your_user DB_PASSWORD=your_password mvn spring-boot:run -Dspring-boot.run.profiles=dev
-```
-
-`dev` 默认 `spring.jpa.hibernate.ddl-auto=update`，会自动建表/更新表结构。
-
 ### 3.5 打包运行
 
 ```bash
@@ -179,10 +178,10 @@ mvn clean package
 java -jar target/rbac-admin-scaffold-0.0.1-SNAPSHOT.jar
 ```
 
-指定 profile：
+默认仍使用 `dev` profile；生产环境显式指定：
 
 ```bash
-java -jar target/rbac-admin-scaffold-0.0.1-SNAPSHOT.jar --spring.profiles.active=dev
+java -jar target/rbac-admin-scaffold-0.0.1-SNAPSHOT.jar --spring.profiles.active=prod
 ```
 
 ---
@@ -193,14 +192,13 @@ java -jar target/rbac-admin-scaffold-0.0.1-SNAPSHOT.jar --spring.profiles.active
 
 | Profile | 数据库 | 用途 |
 | --- | --- | --- |
-| `local` | H2 内存库，`create-drop` | 本地开发、演示、测试，零配置 |
-| `dev` | MySQL，`ddl-auto=update` | 联调开发环境 |
-| `prod` | MySQL，`ddl-auto=validate` | 生产环境，需自行管理表结构 |
+| `dev` | MySQL | 默认 profile，本地开发与联调 |
+| `prod` | MySQL | 生产环境，数据库连接与密钥全部由环境变量提供 |
 
-默认 profile 由 `application.properties` 指定为 `local`：
+默认 profile 由 `application.properties` 指定为 `dev`：
 
 ```properties
-spring.profiles.active=${SPRING_PROFILES_ACTIVE:local}
+spring.profiles.active=${SPRING_PROFILES_ACTIVE:dev}
 ```
 
 ### 4.2 主要环境变量
@@ -208,15 +206,38 @@ spring.profiles.active=${SPRING_PROFILES_ACTIVE:local}
 | 环境变量 | 说明 | 默认值 |
 | --- | --- | --- |
 | `SERVER_PORT` | 服务端口 | `8080` |
-| `SPRING_PROFILES_ACTIVE` | 激活的 profile | `local` |
+| `SPRING_PROFILES_ACTIVE` | 激活的 profile | `dev` |
 | `JWT_SECRET` | JWT 签名密钥，生产必须替换 | 内置开发密钥 |
 | `JWT_EXPIRATION` | Token 有效期（秒） | `604800`（7 天） |
 | `DEV_BYPASS_TOKEN` | 开发免登录令牌，空值表示关闭 | 空 |
 | `CORS_ALLOWED_ORIGINS` | 允许的跨域来源，逗号分隔 | `*` |
-| `DB_URL` | JDBC 连接串 | dev/local 有默认值 |
-| `DB_USERNAME` | 数据库用户名 | `root` |
-| `DB_PASSWORD` | 数据库密码 | `root` |
-| `JPA_DDL_AUTO` | dev 环境表结构策略 | `update` |
+| `DB_URL` | JDBC 连接串 | dev 有默认值，prod 必填 |
+| `DB_USERNAME` | 数据库用户名 | dev 默认 `root`，prod 必填 |
+| `DB_PASSWORD` | 数据库密码 | dev 默认 `123456`，prod 必填 |
+| `JPA_SHOW_SQL` | 是否打印 SQL | `false` |
+
+### 4.3 Flyway 配置
+
+表结构由 Flyway 管理，Hibernate 不再自动建表：
+
+```properties
+spring.jpa.hibernate.ddl-auto=none
+
+spring.flyway.enabled=true
+spring.flyway.locations=classpath:db/migration
+spring.flyway.baseline-on-migrate=true
+spring.flyway.baseline-version=0
+spring.flyway.clean-disabled=true
+spring.flyway.validate-on-migrate=true
+```
+
+- 迁移脚本位置：`src/main/resources/db/migration`
+- 当前版本：`V1__init.sql`，负责创建 6 张核心表及索引
+- 执行记录：`flyway_schema_history`
+- 新增变更：添加 `V2__xxx.sql`，启动时自动执行
+- 已执行过的迁移脚本不要修改，否则校验会失败
+
+> 测试环境使用 `src/test/resources/application.properties`，启用测试专用 H2 并关闭 Flyway，不依赖本机 MySQL。
 
 ---
 
@@ -233,7 +254,7 @@ spring.profiles.active=${SPRING_PROFILES_ACTIVE:local}
 | `t_permission` | 权限（以权限编码作为校验依据） |
 | `t_role_permission` | 角色-权限关联 |
 
-参考建表脚本见 [`docs/schema-mysql.sql`](docs/schema-mysql.sql)。
+建表脚本由 Flyway 管理，见 `src/main/resources/db/migration/V1__init.sql`。应用启动时先执行迁移建表，再由 `DataInitializer` 幂等补齐权限、默认组织、系统角色和默认账号。
 
 ### 5.2 角色模型
 
@@ -414,6 +435,8 @@ module/product
 └── service/ProductService.java
 ```
 
+如果新模块需要新表，在 `src/main/resources/db/migration` 下新增迁移脚本（例如 `V2__product.sql`），应用启动时 Flyway 会自动执行。不要修改已经执行过的 `V1__init.sql`。
+
 在 `SystemConstants.BASE_PERMISSIONS` 中登记权限编码，例如：
 
 ```java
@@ -466,7 +489,7 @@ public ApiResponse<Product> create(@Valid @RequestBody CreateProductRequest requ
 4. **使用 HTTPS**：JWT 通过 Authorization 头传输，必须部署在 HTTPS 之后。
 5. **限制 CORS**：生产环境将 `CORS_ALLOWED_ORIGINS` 配置为明确的域名，不要使用 `*`。
 6. **管理数据库账号**：生产环境使用最小权限数据库账号，并通过环境变量提供连接信息。
-7. **管理表结构**：生产环境使用 `ddl-auto=validate`，建议引入 Flyway/Liquibase 管理迁移。
+7. **管理表结构**：生产环境通过 Flyway 新增 `V2__xxx.sql` 等迁移脚本升级表结构，不要修改已执行过的脚本。
 8. **补充审计与限流**：登录失败次数限制、操作审计日志、接口限流等需按实际业务补充。
 9. **Token 吊销**：当前登出黑名单保存在进程内存，重启后失效；多实例场景请替换为集中式存储。
 10. **权限缓存一致性**：跨实例部署时，角色权限变更需要广播失效事件。
@@ -479,7 +502,7 @@ public ApiResponse<Product> create(@Valid @RequestBody CreateProductRequest requ
 mvn test
 ```
 
-当前测试覆盖：
+单元/集成测试使用 `src/test/resources/application.properties` 中的测试专用 H2 内存库，并关闭 Flyway，因此执行测试不需要 MySQL。测试覆盖：
 
 - Spring 上下文启动；
 - 默认账号登录并获取用户信息；

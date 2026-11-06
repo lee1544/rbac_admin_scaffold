@@ -2,6 +2,7 @@ package com.example.rbac.module.role.repository;
 
 import com.example.rbac.module.role.entity.UserRole;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -15,9 +16,17 @@ public interface UserRoleRepository extends JpaRepository<UserRole, Integer> {
 
     List<UserRole> findByRoleId(Integer roleId);
 
-    void deleteByUserId(Integer userId);
+    /**
+     * Bulk delete executed immediately, so a subsequent re-assignment cannot
+     * insert the same (user_id, role_id) pair before the old row is removed.
+     */
+    @Modifying(flushAutomatically = true)
+    @Query("delete from UserRole ur where ur.userId = :userId")
+    void deleteByUserId(@Param("userId") Integer userId);
 
-    void deleteByRoleId(Integer roleId);
+    @Modifying(flushAutomatically = true)
+    @Query("delete from UserRole ur where ur.roleId = :roleId")
+    void deleteByRoleId(@Param("roleId") Integer roleId);
 
     boolean existsByUserIdAndRoleId(Integer userId, Integer roleId);
 

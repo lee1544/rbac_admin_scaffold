@@ -19,6 +19,7 @@
         <guava.version>32.0.1-jre</guava.version>
         <h2.version>2.1.214</h2.version>
         <mysql.version>8.0.28</mysql.version>
+        <flyway.version>8.5.13</flyway.version>
     </properties>
 
     <dependencyManagement>
@@ -69,18 +70,32 @@
             <version>${guava.version}</version>
         </dependency>
 
-        <!-- Databases: H2 for zero-config local run, MySQL for real environments -->
-        <dependency>
-            <groupId>com.h2database</groupId>
-            <artifactId>h2</artifactId>
-            <version>${h2.version}</version>
-            <scope>runtime</scope>
-        </dependency>
+        <!-- Database: MySQL -->
         <dependency>
             <groupId>mysql</groupId>
             <artifactId>mysql-connector-java</artifactId>
             <version>${mysql.version}</version>
             <scope>runtime</scope>
+        </dependency>
+
+        <!-- Flyway: schema migration at startup. Flyway 8.5.13 matches Spring Boot 2.6.x. -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+            <version>${flyway.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-mysql</artifactId>
+            <version>${flyway.version}</version>
+        </dependency>
+
+        <!-- H2 is test-scoped only: integration tests do not need a MySQL instance. -->
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <version>${h2.version}</version>
+            <scope>test</scope>
         </dependency>
 
         <dependency>
@@ -107,6 +122,11 @@
                     <target>${java.version}</target>
                     <encoding>UTF-8</encoding>
                 </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.1.1</version>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
